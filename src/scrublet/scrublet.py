@@ -159,6 +159,7 @@ def compute_doublet_scores(E, n_neighbors=50, sim_doublet_ratio=3, expected_doub
     output['doublet_scores_observed_cells'] = nn_outs[0]
     output['doublet_scores_simulated_doublets'] = nn_outs[1]
     output['doublet_neighbor_parents'] = nn_outs[2]
+    output['parent_ix'] = parent_ix
     return output
 
 #========================================================================================#
