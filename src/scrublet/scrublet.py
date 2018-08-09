@@ -276,7 +276,7 @@ def simulate_doublets_from_counts(E, sim_doublet_ratio=1, clusters=None, use_clu
             good_idx = (np.diff(clusters[idx]) != 0)
             n_idx += good_idx.sum()
             pair_ix = np.append(pair_ix, idx[good_idx.ravel(), :], axis=0)
-        pair_ix = idx_keep[:n_doub, :]
+        pair_ix = pair_ix[:n_doub, :]
     else:
         pair_ix = np.random.randint(0, n_obs, size=(n_doub, 2))
     Edoub = E[pair_ix[:, 0], :] + E[pair_ix[:, 1], :]
