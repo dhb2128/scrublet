@@ -1,14 +1,18 @@
 from .helper_functions import *
 from sklearn.decomposition import PCA, TruncatedSVD
 
-def compute_doublet_scores(E, n_neighbors=50, sim_doublet_ratio=3, expected_doublet_rate = 0.1, use_approx_neighbors=True, total_counts_normalize=True, min_counts=3, min_cells=3, vscore_percentile=85, gene_filter=None, scaling_method = 'zscore', n_prin_comps=30, get_doublet_neighbor_parents = False):
+
+def compute_doublet_scores(E, n_neighbors=50, sim_doublet_ratio=3, expected_doublet_rate=0.1,
+    use_approx_neighbors=True, total_counts_normalize=True, min_counts=3, min_cells=3,
+    vscore_percentile=85, gene_filter=None, scaling_method='zscore', n_prin_comps=30,
+    get_doublet_neighbor_parents=False, clusters=None, use_clusters=False):
     ''' Predict cell doublets
 
     Given a counts matrix `E`, calculates a doublet score between 0 and 1 by 
     simulating doublets, performing PCA, building a k-nearest-neighbor graph, 
     and finding the fraction of each observed transcriptome's neighbors that are
     simulated doublets. This 
-    
+
     Required inputs:
     - E: 2-D matrix with shape (n_cells, n_genes)
         scipy.sparse matrix or numpy array containing raw (unnormalized) 
@@ -65,9 +69,10 @@ def compute_doublet_scores(E, n_neighbors=50, sim_doublet_ratio=3, expected_doub
         `None` if `get_doublet_neighbor_parents` is `False`. Otherwise, entry i
         is the list (1-D numpy array) of parent cells that generated the doublet 
         neighbors of cell i. Cells with no doublet neighbors have an empty list.
+    - "parent_ix": numpy array of indices used for simulating doublets
     '''
 
-    # Initialize output: dictionary to store results 
+    # Initialize output: dictionary to store results
     # and useful intermediate variables
     output = {}
 
@@ -85,14 +90,14 @@ def compute_doublet_scores(E, n_neighbors=50, sim_doublet_ratio=3, expected_doub
         print('Converting to scipy.sparse.csc_matrix')
         E = E.tocsc()
 
-    # Simulate doublets 
+    # Simulate doublets
     print('Simulating doublets')
-    E_doub, parent_ix = simulate_doublets_from_counts(E, sim_doublet_ratio)
+    E_doub, parent_ix = simulate_doublets_from_counts(E, sim_doublet_ratio, clusters, use_clusters)
 
     # Total counts normalize observed cells and simulated doublets
     if total_counts_normalize:
         print('Total counts normalizing')
-        E = tot_counts_norm(E)[0] 
+        E = tot_counts_norm(E)[0]
         E_doub = tot_counts_norm(E_doub, target_mean=1e5)[0]
 
     # Filter genes (highly variable, expressed above minimum level)
@@ -118,7 +123,7 @@ def compute_doublet_scores(E, n_neighbors=50, sim_doublet_ratio=3, expected_doub
         E.data = np.log10(1 + E.data)
         E_doub.data = np.log10(1 + E_doub.data)
         # to do: option of TruncatedSVD to preserve sparsity
-        pca = PCA(n_components = n_prin_comps)
+        pca = PCA(n_components=n_prin_comps)
         E_doub = E_doub.toarray()
         E = E.toarray()
     elif scaling_method == 'zscore':
@@ -127,10 +132,10 @@ def compute_doublet_scores(E, n_neighbors=50, sim_doublet_ratio=3, expected_doub
         gene_stdevs = np.sqrt(sparse_var(E))
         E = sparse_zscore(E, gene_means, gene_stdevs)
         E_doub = sparse_zscore(E_doub, gene_means, gene_stdevs)
-        pca = PCA(n_components = n_prin_comps)
+        pca = PCA(n_components=n_prin_comps)
     else:
         # to do: option of TruncatedSVD to preserve sparsity
-        pca = PCA(n_components = n_prin_comps)
+        pca = PCA(n_components=n_prin_comps)
         E_doub = E_doub.toarray()
         E = E.toarray()
 
@@ -140,7 +145,7 @@ def compute_doublet_scores(E, n_neighbors=50, sim_doublet_ratio=3, expected_doub
     pca.fit(E)
     E_pca = pca.transform(E)
     E_doub_pca = pca.transform(E_doub)
-    doub_labels = np.concatenate((np.zeros(E_pca.shape[0], dtype=int), 
+    doub_labels = np.concatenate((np.zeros(E_pca.shape[0], dtype=int),
                                   np.ones(E_doub_pca.shape[0], dtype=int)))
 
     output['pca_observed_cells'] = E_pca
@@ -148,14 +153,14 @@ def compute_doublet_scores(E, n_neighbors=50, sim_doublet_ratio=3, expected_doub
 
     # Calculate doublet scores using k-nearest-neighbor classifier
     print('Building kNN graph and calculating doublet scores')
-    nn_outs = nearest_neighbor_classifier(np.vstack((E_pca, E_doub_pca)), 
-                                          doub_labels, 
-                                          k=n_neighbors, 
-                                          use_approx_nn=use_approx_neighbors, 
-                                          exp_doub_rate = expected_doublet_rate, 
-                                          get_neighbor_parents = get_doublet_neighbor_parents,
-                                          parent_cells = parent_ix
-                                         ) 
+    nn_outs = nearest_neighbor_classifier(np.vstack((E_pca, E_doub_pca)),
+                                          doub_labels,
+                                          k=n_neighbors,
+                                          use_approx_nn=use_approx_neighbors,
+                                          exp_doub_rate=expected_doublet_rate,
+                                          get_neighbor_parents=get_doublet_neighbor_parents,
+                                          parent_cells=parent_ix
+                                          )
     output['doublet_scores_observed_cells'] = nn_outs[0]
     output['doublet_scores_simulated_doublets'] = nn_outs[1]
     output['doublet_neighbor_parents'] = nn_outs[2]
@@ -164,7 +169,8 @@ def compute_doublet_scores(E, n_neighbors=50, sim_doublet_ratio=3, expected_doub
 
 #========================================================================================#
 
-def plot_scrublet_results(coords, doublet_scores_obs, doublet_scores_sim, score_threshold, marker_size=5, order_points=False, scale_hist_obs='log', scale_hist_sim='linear', fig_size = (8,6)):
+
+def plot_scrublet_results(coords, doublet_scores_obs, doublet_scores_sim, score_threshold, marker_size=5, order_points=False, scale_hist_obs='log', scale_hist_sim='linear', fig_size=(8, 6)):
 
     import matplotlib.pyplot as plt
     from matplotlib.lines import Line2D
@@ -174,61 +180,63 @@ def plot_scrublet_results(coords, doublet_scores_obs, doublet_scores_sim, score_
     predictable_doub_frac = sum(called_doubs_sim) / float(len(called_doubs_sim))
     called_frac = sum(called_doubs) / float(len(called_doubs))
 
-    print('{}/{} = {:.1f}% of cells are predicted doublets.'.format(sum(called_doubs), len(called_doubs), 
-                                                              100 * called_frac))
+    print('{}/{} = {:.1f}% of cells are predicted doublets.'.format(sum(called_doubs), len(called_doubs),
+                                                                    100 * called_frac))
     print('{:.1f}% of doublets are predicted to be detectable.'.format(100 * predictable_doub_frac))
-    print('Predicted overall doublet rate = {:.1f}%'.format(100 * called_frac / predictable_doub_frac))    
+    print('Predicted overall doublet rate = {:.1f}%'.format(100 * called_frac / predictable_doub_frac))
 
-    fig, axs = plt.subplots(2, 2, figsize = fig_size)
+    fig, axs = plt.subplots(2, 2, figsize=fig_size)
 
-    ax = axs[0,0]
-    ax.hist(doublet_scores_obs, np.linspace(0, 1, 50), color = 'gray', linewidth = 0, density=True)
+    ax = axs[0, 0]
+    ax.hist(doublet_scores_obs, np.linspace(0, 1, 50), color='gray', linewidth=0, density=True)
     ax.set_yscale(scale_hist_obs)
     yl = ax.get_ylim()
     ax.set_ylim(yl)
-    ax.plot([score_threshold, score_threshold], yl, c = 'black', linewidth = 1)
+    ax.plot([score_threshold, score_threshold], yl, c='black', linewidth=1)
     ax.set_title('Observed cells')
     ax.set_xlabel('Doublet score')
     ax.set_ylabel('Prob. density')
 
-    ax = axs[0,1]
-    ax.hist(doublet_scores_sim, np.linspace(0, 1, 50), color = 'gray', linewidth = 0, density=True)
+    ax = axs[0, 1]
+    ax.hist(doublet_scores_sim, np.linspace(0, 1, 50), color='gray', linewidth=0, density=True)
     ax.set_yscale(scale_hist_sim)
     yl = ax.get_ylim()
     ax.set_ylim(yl)
-    ax.plot([score_threshold, score_threshold], yl, c = 'black', linewidth = 1)
+    ax.plot([score_threshold, score_threshold], yl, c='black', linewidth=1)
     ax.set_title('Simulated doublets')
     ax.set_xlabel('Doublet score')
     ax.set_ylabel('Prob. density')
 
-    x = coords[:,0]
-    y = coords[:,1]
+    x = coords[:, 0]
+    y = coords[:, 1]
     xl = (x.min() - x.ptp() * .05, x.max() + x.ptp() * 0.05)
     yl = (y.min() - y.ptp() * .05, y.max() + y.ptp() * 0.05)
-    
+
     if order_points:
         o = np.argsort(doublet_scores_obs)
     else:
-        o = np.arange(len(doublet_scores_obs)) 
-    
-    ax = axs[1,0]
-    pp = ax.scatter(x[o], y[o], s=marker_size, edgecolors='', c = doublet_scores_obs[o], cmap=darken_cmap(plt.cm.Reds, 0.9))
+        o = np.arange(len(doublet_scores_obs))
+
+    ax = axs[1, 0]
+    pp = ax.scatter(x[o], y[o], s=marker_size, edgecolors='',
+                    c=doublet_scores_obs[o], cmap=darken_cmap(plt.cm.Reds, 0.9))
     ax.set_xlim(xl)
     ax.set_ylim(yl)
     ax.set_xticks([])
     ax.set_yticks([])
     ax.set_title('Doublet score')
 
-    ax = axs[1,1]
-    ax.scatter(x[o], y[o], s=marker_size, edgecolors='', c=doublet_scores_obs[o] > score_threshold, cmap = custom_cmap([[.7,.7,.7], [0,0,0]]))
+    ax = axs[1, 1]
+    ax.scatter(x[o], y[o], s=marker_size, edgecolors='', c=doublet_scores_obs[o]
+               > score_threshold, cmap=custom_cmap([[.7, .7, .7], [0, 0, 0]]))
     ax.set_xlim(xl)
     ax.set_ylim(yl)
     ax.set_xticks([])
     ax.set_yticks([])
     ax.set_title('Predicted doublets')
-    singlet_marker = Line2D([], [], color=[.7,.7,.7], marker='o', markersize=5, label='Singlet', linewidth=0)
-    doublet_marker = Line2D([], [], color=[.0,.0,.0], marker='o', markersize=5, label='Doublet', linewidth=0)
-    ax.legend(handles = [singlet_marker, doublet_marker])
+    singlet_marker = Line2D([], [], color=[.7, .7, .7], marker='o', markersize=5, label='Singlet', linewidth=0)
+    doublet_marker = Line2D([], [], color=[.0, .0, .0], marker='o', markersize=5, label='Doublet', linewidth=0)
+    ax.legend(handles=[singlet_marker, doublet_marker])
 
     fig.tight_layout()
 
@@ -236,7 +244,8 @@ def plot_scrublet_results(coords, doublet_scores_obs, doublet_scores_sim, score_
 
 #========================================================================================#
 
-def simulate_doublets_from_counts(E, sim_doublet_ratio=1):
+
+def simulate_doublets_from_counts(E, sim_doublet_ratio=1, clusters=None, use_clusters=False):
     '''
     Simulate doublets by summing the counts of random cell pairs.
 
@@ -258,12 +267,24 @@ def simulate_doublets_from_counts(E, sim_doublet_ratio=1):
 
     n_obs = E.shape[0]
     n_doub = int(n_obs * sim_doublet_ratio)
-    pair_ix = np.random.randint(0, n_obs, size=(n_doub, 2))
-    Edoub = E[pair_ix[:, 0],:] + E[pair_ix[:, 1],:]
+
+    if use_clusters and clusters is not None:
+        pair_ix = np.empty((0, 2), int)
+        n_idx = 0
+        while n_idx < n_doub:
+            idx = np.random.randint(0, n_obs, size=(n_doub, 2))
+            good_idx = (np.diff(clusters[idx]) != 0)
+            n_idx += good_idx.sum()
+            pair_ix = np.append(pair_ix, idx[good_idx.ravel(), :], axis=0)
+        pair_ix = idx_keep[:n_doub, :]
+    else:
+        pair_ix = np.random.randint(0, n_obs, size=(n_doub, 2))
+    Edoub = E[pair_ix[:, 0], :] + E[pair_ix[:, 1], :]
 
     return Edoub, pair_ix
 
 #========================================================================================#
+
 
 def simulate_doublets_from_pca(PCdat, total_counts=None, sim_doublet_ratio=1):
     '''
@@ -284,11 +305,11 @@ def simulate_doublets_from_pca(PCdat, total_counts=None, sim_doublet_ratio=1):
 
     pair_ix = np.random.randint(0, n_obs, size=(n_doub, 2))
 
-    pair_tots = np.hstack((total_counts[pair_ix[:, 0]][:,None], total_counts[pair_ix[:, 1]][:,None]))
+    pair_tots = np.hstack((total_counts[pair_ix[:, 0]][:, None], total_counts[pair_ix[:, 1]][:, None]))
     pair_tots = np.array(pair_tots, dtype=float)
-    pair_fracs = pair_tots / np.sum(pair_tots, axis=1)[:,None]
+    pair_fracs = pair_tots / np.sum(pair_tots, axis=1)[:, None]
 
-    PCdoub = PCdat[pair_ix[:, 0],:] * pair_fracs[:, 0][:,None] + PCdat[pair_ix[:, 1],:] * pair_fracs[:, 1][:,None]
+    PCdoub = PCdat[pair_ix[:, 0], :] * pair_fracs[:, 0][:, None] + PCdat[pair_ix[:, 1], :] * pair_fracs[:, 1][:, None]
 
     PCdoub = np.vstack((PCdat, PCdoub))
     doub_labels = np.concatenate((np.zeros(n_obs, dtype=int), np.ones(n_doub, dtype=int)))
@@ -297,16 +318,17 @@ def simulate_doublets_from_pca(PCdat, total_counts=None, sim_doublet_ratio=1):
 
 #========================================================================================#
 
-def nearest_neighbor_classifier(embedding, doub_labels, k=50, use_approx_nn=True, exp_doub_rate = 1.0, get_neighbor_parents = False, parent_cells = None):
+
+def nearest_neighbor_classifier(embedding, doub_labels, k=50, use_approx_nn=True, exp_doub_rate=1.0, get_neighbor_parents=False, parent_cells=None):
     n_obs = sum(doub_labels == 0)
     n_sim = sum(doub_labels == 1)
 
     # Adjust k (number of nearest neighbors) based on the ratio of simulated to observed cells
-    k_adj = int(round(k * (1+n_sim/float(n_obs))))
+    k_adj = int(round(k * (1 + n_sim / float(n_obs))))
 
     # Find k_adj nearest neighbors
-    neighbors = get_knn_graph(embedding, k=k_adj, dist_metric='euclidean', approx=use_approx_nn, return_edges = False)
-    
+    neighbors = get_knn_graph(embedding, k=k_adj, dist_metric='euclidean', approx=use_approx_nn, return_edges=False)
+
     # Calculate doublet score based on ratio of simulated cell neighbors vs. observed cell neighbors
     doub_neigh_mask = doub_labels[neighbors] == 1
     n_sim_neigh = doub_neigh_mask.sum(1)
@@ -319,14 +341,12 @@ def nearest_neighbor_classifier(embedding, doub_labels, k=50, use_approx_nn=True
         neighbors = neighbors - n_obs
         neighbor_parents = []
         for iCell in range(n_obs):
-            this_doub_neigh = neighbors[iCell,:][neighbors[iCell,:] > -1]
+            this_doub_neigh = neighbors[iCell, :][neighbors[iCell, :] > -1]
             if len(this_doub_neigh) > 0:
-                this_doub_neigh_parents = np.unique(parent_cells[this_doub_neigh,:].flatten())
+                this_doub_neigh_parents = np.unique(parent_cells[this_doub_neigh, :].flatten())
                 neighbor_parents.append(this_doub_neigh_parents)
             else:
                 neighbor_parents.append([])
         neighbor_parents = np.array(neighbor_parents)
 
-    
     return doub_score[doub_labels == 0], doub_score[doub_labels == 1], neighbor_parents
-
